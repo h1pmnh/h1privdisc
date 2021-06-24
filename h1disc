@@ -1,0 +1,145 @@
+#!/usr/bin/python3
+#
+# h1stats is a tool that compiles a csv of all h1 program stats
+#
+# Authors: defparam
+#
+# MIT License
+# 
+# Copyright (c) 2021 defparam
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+import sys
+import requests
+import base64
+import json
+from datetime import datetime
+
+def diff_month(d1, d2):
+    return (d1.year - d2.year) * 12 + d1.month - d2.month
+
+def get_h1_graphql_token(hostsession):
+    hdrs = {"Cookie": "__Host-session="+hostsession,
+    "Content-type": "application/json", 
+    "Host": "hackerone.com",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)",
+    "Accept": "*/*"}
+    resp = requests.get('https://hackerone.com/current_user/graphql_token',headers=hdrs)
+    jsn = json.loads(resp.text)
+    if (jsn['graphql_token'] == "----"):
+        print("[+] Warning: could not obtain graphql token from session, reverting to public only...")
+        return None
+    return jsn['graphql_token']
+
+def get_programinfo(token):
+    H1_XAUTH_TOKEN = token
+    PRIV_PROG_QUERY = """
+    {"operationName":"MyProgramsQuery","variables":{"where":{"_and":[{"_or":[{"submission_state":{"_eq":"open"}},{"submission_state":{"_eq":"api_only"}},{"submission_state":{"_is_null":true}}]},{"_and":[{"_or":[{"bookmarked_team_users":{"is_me":true}},{"whitelisted_hackers":{"is_me":true}}]},{"state":{"_eq":"soft_launched"}}]}]},"count":25,"orderBy":null,"secureOrderBy":{"started_accepting_at":{"_direction":"DESC"}}},"query":"query MyProgramsQuery(     $cursor: String     $count: Int     $where: FiltersTeamFilterInput     $orderBy: TeamOrderInput     $secureOrderBy: FiltersTeamFilterOrder   ) {     teams(       first: $count       after: $cursor       order_by: $orderBy       secure_order_by: $secureOrderBy       where: $where     ) {       pageInfo {         endCursor         hasNextPage         __typename       }       edges {         cursor         node {           id           handle           name     url      currency           submission_state           triage_active           state           started_accepting_at           number_of_reports_for_user           number_of_valid_reports_for_user           bounty_earned_for_user           last_invitation_accepted_at_for_user           bookmarked           allows_bounty_splitting           external_program {             id             __typename           }           ...TeamTableAverageBounty           ...TeamTableMinimumBounty           ...TeamTableResolvedReports           __typename         }         __typename       }       __typename     }     query {       id       __typename     }   }   fragment TeamTableAverageBounty on Team {     id     currency     average_bounty_lower_amount     average_bounty_upper_amount     __typename   }   fragment TeamTableMinimumBounty on Team {     id     currency     base_bounty     __typename   }   fragment TeamTableResolvedReports on Team {     id     resolved_report_count     __typename   }      "}
+    """
+
+    DISCLOSED_ISSUES_QUERY = """
+    {"operationName":"TeamHacktivityPageQuery","variables":{"where": {"report": {"disclosed_at": {"_is_null": false}}, "team":{"handle": {"_eq": "%s"}}},"orderBy":{"field":"popular","direction":"DESC"},"secureOrderBy":null,"count":25},"query":"query TeamHacktivityPageQuery( $orderBy: HacktivityItemOrderInput $secureOrderBy: FiltersHacktivityItemFilterOrder $where: FiltersHacktivityItemFilterInput $count: Int $cursor: String ) { me {   id   __typename } hacktivity_items(   first: $count   after: $cursor   order_by: $orderBy   secure_order_by: $secureOrderBy   where: $where ) {   ...HacktivityList   __typename } } fragment HacktivityList on HacktivityItemConnection { total_count pageInfo {   endCursor   hasNextPage   __typename } edges {  cursor node {     ... on HacktivityItemInterface {       id       databaseId: _id       ...HacktivityItem       __typename     }     __typename   }   __typename } __typename } fragment HacktivityItem on HacktivityItemUnion { type: __typename ... on HacktivityItemInterface {   id   __typename } ... on Disclosed {   id   ...HacktivityItemDisclosed   __typename } ... on HackerPublished {   id   ...HacktivityItemHackerPublished   __typename } } fragment HacktivityItemDisclosed on Disclosed { id reporter {   id   username   __typename } team {   handle   name   medium_profile_picture: profile_picture(size: medium)   url   id    __typename } report {   id   title   substate   url   __typename } latest_disclosable_action latest_disclosable_activity_at total_awarded_amount severity_rating currency __typename } fragment HacktivityItemHackerPublished on HackerPublished { id reporter {   id   username     __typename } team {   id   handle   name   medium_profile_picture: profile_picture(size: medium)   url   __typename } report {   id   url   title   substate   __typename } latest_disclosable_activity_at severity_rating __typename } "}
+    """
+    query = json.loads(PRIV_PROG_QUERY)
+    last_cursor = ""
+    
+    if H1_XAUTH_TOKEN == None:
+        hdrs = {"Content-type": "application/json", 
+            "Host": "hackerone.com",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)",
+            "Accept": "*/*"}
+    else:
+        hdrs = {"X-Auth-Token": H1_XAUTH_TOKEN,
+            "Content-type": "application/json", 
+            "Host": "hackerone.com",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)",
+            "Accept": "*/*"}        
+        
+    print("[+] Please wait... (this may take several minutes)")
+    print("[+] Collecting...\r", flush=1, end='')
+    
+    now = datetime.now()
+    filename = "h1disc-PRIVATE-%s-%s-%s.csv"%(str(now.year),str(now.month),str(now.day))
+        
+    with open(filename,"w",encoding="utf-8") as f:
+        f.write("Program Name,URL,Bug Title,Bug ID,Bug URL,Bug Reporter,Severity,Payout\n")
+        progcount = 0
+        while(1):
+            query["variables"]["cursor"] = last_cursor
+            
+            resp = requests.post('https://hackerone.com/graphql',headers=hdrs,data=json.dumps(query))
+            # print(resp.text)
+            data = json.loads(resp.text)
+            progcount += len(data["data"]["teams"]["edges"])
+            print("[+] Collecting... (%d programs)                              \r"%(progcount), flush=1, end='')
+            
+            if len(data["data"]["teams"]["edges"]) == 0:
+                print("\n[+] Wrote all data to: %s"%filename)
+                if H1_XAUTH_TOKEN != None:
+                    print("[+] Warning: this data contains private information under NDA, do not publish!")
+                print("[+] Done!")
+                break
+             
+            for edge in data["data"]["teams"]["edges"]:
+                last_cursor = edge["cursor"]
+                url = edge["node"]["url"]
+                name = edge["node"]["name"].replace(',','.')
+
+                print("[+] Starting %s" % edge["node"]["handle"])
+                # now execute the query to pull issues for the program
+                issues_query = json.loads(DISCLOSED_ISSUES_QUERY % edge["node"]["handle"])
+                last_cursor_issues = ""
+                while(1):
+                    issues_query["variables"]["cursor"] = last_cursor_issues
+                    issues_resp = requests.post('https://hackerone.com/graphql',headers=hdrs,data=json.dumps(issues_query))
+                    # print(issues_resp.text)
+                    issues_data = json.loads(issues_resp.text)
+
+                    if len(issues_data["data"]["hacktivity_items"]["edges"]) == 0:
+                        print("[+] Completed %s" % edge["node"]["handle"])
+                        break
+
+                    for issue_edge in issues_data["data"]["hacktivity_items"]["edges"]:
+                        last_cursor_issues = issue_edge["cursor"]
+                        reporter_username=""
+                        if issue_edge["node"]['reporter']:
+                            reporter_username = issue_edge["node"]["reporter"]["username"]
+                        
+                        # f.write("Program Name,URL,Bug Title,Bug ID,Bug URL,Bug Reporter,Severity,Payout\n")
+                        f.write("%s,%s,%s,%s,%s,%s,%s,%s\n"%(name,url,issue_edge["node"]["report"]["title"], issue_edge["node"]["databaseId"], issue_edge["node"]["report"]["url"],reporter_username,issue_edge["node"]["severity_rating"],issue_edge["node"]["total_awarded_amount"]))
+  
+
+
+if __name__ == "__main__":
+    print("h1disclosed - get private program disclosed bugs")
+    print("NOTE PRIVATE PROGRAMS ARE UNDER NDA - DO NOT DISCLOSE ANY OF THIS DATA - PERSONAL USE ONLY")
+    print("Credits to @defparam for original h1stats tool")
+
+    if len(sys.argv) == 1:
+        print("[+] No session cookie specified")
+        print("[+] Please supply a session cookie value, cookie name is '__Host-session'")
+        exit(1)
+    else:
+        host_session_token = sys.argv[1]
+        print("[+] Using specified session cookie")
+        print("[+] Collecting private disclosed bugs...")
+        graphql_token = get_h1_graphql_token(host_session_token)
+        
+    get_programinfo(graphql_token)
