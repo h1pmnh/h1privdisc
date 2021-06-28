@@ -1,5 +1,5 @@
 
-# h1stats - h1 Private Program Disclosed Issues Scraper
+# h1privdisc - h1 Private Program Disclosed Issues Scraper
 Created with all credit to @defparam and their `h1stats` tool: https://github.com/defparam/h1stats
 
 Written in Python 3, this script will perform the following:
