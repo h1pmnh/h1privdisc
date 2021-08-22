@@ -28,9 +28,9 @@
 
 import sys
 import requests
-import base64
 import json
 from datetime import datetime
+import csv
 
 def diff_month(d1, d2):
     return (d1.year - d2.year) * 12 + d1.month - d2.month
@@ -109,7 +109,7 @@ def get_programinfo(token):
                 while(1):
                     issues_query["variables"]["cursor"] = last_cursor_issues
                     issues_resp = requests.post('https://hackerone.com/graphql',headers=hdrs,data=json.dumps(issues_query))
-                    # print(issues_resp.text)
+                    print(issues_resp.text)
                     issues_data = json.loads(issues_resp.text)
 
                     if len(issues_data["data"]["hacktivity_items"]["edges"]) == 0:
@@ -121,10 +121,13 @@ def get_programinfo(token):
                         reporter_username=""
                         if issue_edge["node"]['reporter']:
                             reporter_username = issue_edge["node"]["reporter"]["username"]
-                        
-                        # f.write("Program Name,URL,Bug Title,Bug ID,Bug URL,Bug Reporter,Severity,Payout\n")
-                        f.write("%s,%s,%s,%s,%s,%s,%s,%s\n"%(name,url,issue_edge["node"]["report"]["title"], issue_edge["node"]["databaseId"], issue_edge["node"]["report"]["url"],reporter_username,issue_edge["node"]["severity_rating"],issue_edge["node"]["total_awarded_amount"]))
-  
+
+                        total_awarded_amount=0
+                        if "total_awarded_amount" in issue_edge["node"]:
+                            total_awarded_amount=issue_edge["node"]["total_awarded_amount"]
+
+                        CSVWriter = csv.writer(f)
+                        CSVWriter.writerow((name,url,issue_edge["node"]["report"]["title"], issue_edge["node"]["databaseId"], issue_edge["node"]["report"]["url"],reporter_username,issue_edge["node"]["severity_rating"],total_awarded_amount))
 
 
 if __name__ == "__main__":
